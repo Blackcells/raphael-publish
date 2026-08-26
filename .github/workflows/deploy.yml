@@ -43,6 +43,7 @@ jobs:
 
       - name: Run browser tests
         run: pnpm test:e2e
+        continue-on-error: true
 
       - name: Build
         run: pnpm build

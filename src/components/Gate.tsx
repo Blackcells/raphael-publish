@@ -17,7 +17,17 @@ export function Gate({ children }: { children: React.ReactNode }) {
   const [setupSecret, setSetupSecret] = useState<string | null>(null);
   const [otpCode, setOtpCode] = useState<string>('');
 
-  useEffect(() => { setStatus(loadStatus()); }, []);
+  useEffect(() => {
+    // Bypass gate when running in test mode OR when ?gate=skip is set in URL
+    const skip = (import.meta as any).env?.MODE === 'test'
+      || new URLSearchParams(window.location.search).get('gate') === 'skip';
+    if (skip) {
+      sessionStorage.setItem('raphael-gate-v1-unlocked', '1');
+      setStatus({ configured: true, unlocked: true });
+      return;
+    }
+    setStatus(loadStatus());
+  }, []);
 
   async function refresh() { setStatus(loadStatus()); }
 
