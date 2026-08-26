@@ -1,25 +1,33 @@
 /**
  * Client-side password + TOTP (RFC 6238) gate for raphael-publish.
  *
- * SECURITY NOTE
- * -------------
- * This is a STATIC GitHub Pages site — there is no backend. The TOTP shared
- * secret ships inside the JS bundle, so any visitor who downloads the bundle
- * can extract it. This gate provides friction (must enter current 6-digit
- * code from authenticator app), not true confidentiality. If you need real
- * protection, host a serverless function or move behind Cloudflare Access.
+ * STATIC SITE LIMITATION
+ * ----------------------
+ * There is no backend. Password + TOTP secret are hardcoded in
+ * `gateConfig.ts` and shipped in the JS bundle, so anyone with view-source
+ * can read them. This is OBSCURITY-BASED gating, not real auth.
  *
- * Two-phase setup:
- *   Phase 1 — admin sets the password by hashing a one-time code and storing
- *             the TOTP secret + password hash in localStorage.
- *   Phase 2 — visitor enters current TOTP code; gate verifies against
- *             HMAC-SHA1(secret, floor(unixSeconds / 30)) truncated to 6 digits.
+ * Flow:
+ *   1. User visits the site → sees lock screen with default password hint
+ *      and TOTP secret (so they can add it to their authenticator).
+ *   2. User enters default password + current 6-digit TOTP code.
+ *   3. Gate verifies HMAC-SHA1(defaultSecret, floor(now/30)) truncated to
+ *      6 digits (±1 step tolerance for clock drift).
+ *   4. sessionStorage marks this tab as unlocked — reload keeps unlocked.
+ *   5. Opening a new browser/incognito → just re-enter same credentials.
+ *      NO per-browser setup required.
  *
- * The initial admin password defaults to `Raphael2026!` (printed in the
- * deployment message). Change it in main.tsx or via the in-app setup screen.
+ * Optional per-browser override:
+ *   If the user wants a different password/TOTP on a specific browser
+ *   (e.g., to revoke access from a lost laptop), they can use the
+ *   "Customize for this browser" panel which writes to localStorage.
+ *   Defaults always work as a fallback.
  */
 
+import { DEFAULT_PASSWORD, DEFAULT_TOTP_SECRET, TOTP_ISSUER, TOTP_ACCOUNT } from './gateConfig';
+
 const STORAGE_KEY = 'raphael-gate-v1';
+const UNLOCKED_KEY = 'raphael-gate-v1-unlocked';
 
 // ---------- SHA-256 + Base32 + HMAC-SHA1 primitives (browser Web Crypto) ----
 
@@ -40,10 +48,19 @@ function bufToBase32(bytes: Uint8Array): string {
   return out;
 }
 
-function randomSecret(): string {
-  const bytes = new Uint8Array(20); // 160-bit
-  crypto.getRandomValues(bytes);
-  return bufToBase32(bytes);
+function base32ToBytes(s: string): Uint8Array {
+  const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
+  const clean = s.replace(/=+$/g, '').toUpperCase();
+  let bits = 0, value = 0;
+  const out: number[] = [];
+  for (const ch of clean) {
+    const idx = alphabet.indexOf(ch);
+    if (idx < 0) continue;
+    value = (value << 5) | idx;
+    bits += 5;
+    if (bits >= 8) { out.push((value >>> (bits - 8)) & 0xff); bits -= 8; }
+  }
+  return new Uint8Array(out);
 }
 
 async function sha256(text: string): Promise<string> {
@@ -81,21 +98,6 @@ export async function generateTotp(secretB32: string, atSeconds?: number): Promi
   return String(bin % 1_000_000).padStart(6, '0');
 }
 
-function base32ToBytes(s: string): Uint8Array {
-  const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
-  const clean = s.replace(/=+$/g, '').toUpperCase();
-  let bits = 0, value = 0;
-  const out: number[] = [];
-  for (const ch of clean) {
-    const idx = alphabet.indexOf(ch);
-    if (idx < 0) continue;
-    value = (value << 5) | idx;
-    bits += 5;
-    if (bits >= 8) { out.push((value >>> (bits - 8)) & 0xff); bits -= 8; }
-  }
-  return new Uint8Array(out);
-}
-
 // Accept codes within ±1 step to tolerate clock drift.
 export async function verifyTotp(secretB32: string, code: string): Promise<boolean> {
   const now = Date.now() / 1000;
@@ -106,7 +108,7 @@ export async function verifyTotp(secretB32: string, code: string): Promise<boole
   return false;
 }
 
-// ---------- Storage shape ---------------------------------------------------
+// ---------- Storage shape (per-browser override) ----------------------------
 
 export interface GateRecord {
   passwordHash: string;
@@ -114,12 +116,7 @@ export interface GateRecord {
   createdAt: number;
 }
 
-export interface GateStatus {
-  configured: boolean;
-  unlocked: boolean;
-}
-
-function readRecord(): GateRecord | null {
+function readOverride(): GateRecord | null {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return null;
@@ -127,44 +124,76 @@ function readRecord(): GateRecord | null {
   } catch { return null; }
 }
 
-function writeRecord(rec: GateRecord) {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(rec));
-}
-
-export function loadStatus(): GateStatus {
-  return { configured: !!readRecord(), unlocked: sessionStorage.getItem(STORAGE_KEY + '-unlocked') === '1' };
-}
-
-// Default admin password for first-time setup; change in src/config.ts.
-export const DEFAULT_ADMIN_PASSWORD = 'Raphael2026!';
-
-export async function setupGate(password: string): Promise<{ secret: string; passwordHash: string }> {
-  const secret = randomSecret();
-  const passwordHash = await sha256(password);
-  writeRecord({ passwordHash, totpSecret: secret, createdAt: Date.now() });
-  return { secret, passwordHash };
-}
-
-export async function resetGate(): Promise<void> {
+export function clearOverride(): void {
   localStorage.removeItem(STORAGE_KEY);
-  sessionStorage.removeItem(STORAGE_KEY + '-unlocked');
 }
 
-export async function unlockWithTotp(code: string): Promise<boolean> {
-  const rec = readRecord();
-  if (!rec) return false;
-  const ok = await verifyTotp(rec.totpSecret, code.trim());
-  if (ok) sessionStorage.setItem(STORAGE_KEY + '-unlocked', '1');
-  return ok;
+export async function setOverride(password: string, totpSecret: string): Promise<void> {
+  const passwordHash = await sha256(password);
+  localStorage.setItem(STORAGE_KEY, JSON.stringify({ passwordHash, totpSecret, createdAt: Date.now() }));
 }
 
-export async function verifyAdminPassword(password: string): Promise<boolean> {
-  const rec = readRecord();
-  if (!rec) return false;
-  const h = await sha256(password);
-  return constantTimeEqual(h, rec.passwordHash);
+// ---------- Public API used by Gate.tsx --------------------------------------
+
+export interface ResolvedConfig {
+  password: string;       // plain text default; or "" if per-browser override is set (then we compare hashes)
+  totpSecret: string;
+  source: 'default' | 'override';
 }
 
-export function otpauthUrl(secret: string, account = 'raphael-admin', issuer = 'RaphaelPublish'): string {
+export function getActiveConfig(): ResolvedConfig {
+  const override = readOverride();
+  if (override) {
+    return { password: '', totpSecret: override.totpSecret, source: 'override' };
+  }
+  return { password: DEFAULT_PASSWORD, totpSecret: DEFAULT_TOTP_SECRET, source: 'default' };
+}
+
+export function getDefaults(): { password: string; totpSecret: string; issuer: string; account: string } {
+  return { password: DEFAULT_PASSWORD, totpSecret: DEFAULT_TOTP_SECRET, issuer: TOTP_ISSUER, account: TOTP_ACCOUNT };
+}
+
+export function loadStatus(): { unlocked: boolean } {
+  return { unlocked: sessionStorage.getItem(UNLOCKED_KEY) === '1' };
+}
+
+export function unlock(): void {
+  sessionStorage.setItem(UNLOCKED_KEY, '1');
+}
+
+export function lock(): void {
+  sessionStorage.removeItem(UNLOCKED_KEY);
+}
+
+/**
+ * Verify the visitor's credentials against the active config.
+ * - When using defaults, password is compared as plain text (it's hardcoded anyway).
+ * - When using per-browser override, password is hashed and compared.
+ */
+export async function unlockWithPasswordAndTotp(password: string, code: string): Promise<boolean> {
+  const cfg = getActiveConfig();
+  let passwordOk = false;
+  if (cfg.source === 'default') {
+    passwordOk = constantTimeEqual(password, cfg.password);
+  } else {
+    const override = readOverride();
+    if (override) {
+      const h = await sha256(password);
+      passwordOk = constantTimeEqual(h, override.passwordHash);
+    }
+  }
+  if (!passwordOk) return false;
+
+  const totpOk = await verifyTotp(cfg.totpSecret, code.trim());
+  if (!totpOk) return false;
+
+  unlock();
+  return true;
+}
+
+export function otpauthUrl(secret: string, account = TOTP_ACCOUNT, issuer = TOTP_ISSUER): string {
   return `otpauth://totp/${encodeURIComponent(issuer)}:${encodeURIComponent(account)}?secret=${secret}&issuer=${encodeURIComponent(issuer)}&algorithm=SHA1&digits=6&period=30`;
 }
+
+// Back-compat aliases kept so any other imports still work
+export const DEFAULT_ADMIN_PASSWORD = DEFAULT_PASSWORD;
