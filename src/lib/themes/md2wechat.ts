@@ -75,15 +75,6 @@ function lighten(hex: string): string {
   return '#' + mix(r) + mix(g) + mix(b);
 }
 
-function darken(hex: string, amount = 0.85): string {
-  const m = hex.replace('#', '');
-  const r = parseInt(m.slice(0, 2), 16);
-  const g = parseInt(m.slice(2, 4), 16);
-  const b = parseInt(m.slice(4, 6), 16);
-  const mix = (c: number) => Math.round(c * amount).toString(16).padStart(2, '0');
-  return '#' + mix(r) + mix(g) + mix(b);
-}
-
 const SYS = '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif';
 const SERIF = 'Georgia, "Times New Roman", Times, serif';
 const MONO = '"SF Mono", "Fira Code", Consolas, monospace';

@@ -15,7 +15,6 @@ export function Gate({ children }: { children: React.ReactNode }) {
   const [totp, setTotp] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [setupSecret, setSetupSecret] = useState<string | null>(null);
-  const [otpCode, setOtpCode] = useState<string>('');
 
   useEffect(() => {
     // Bypass gate when running in test mode OR when ?gate=skip is set in URL
@@ -51,7 +50,7 @@ export function Gate({ children }: { children: React.ReactNode }) {
   async function onReset() {
     if (!confirm('确定要重置门禁吗？这会清除当前密钥，所有人需重新设置。')) return;
     await resetGate();
-    setSetupSecret(null); setPw(''); setOtpCode(''); setError(null);
+    setSetupSecret(null); setPw(''); setError(null);
     await refresh();
   }
 
