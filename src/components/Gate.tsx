@@ -4,8 +4,7 @@ import {
   unlockWithPasswordAndTotp,
   loadStatus,
   lock,
-  setOverride,
-  clearOverride,
+  purgeLegacyState,
   otpauthUrl,
   generateTotp,
 } from '../lib/secureGate';
@@ -16,12 +15,9 @@ export function Gate({ children }: { children: React.ReactNode }) {
   const [totp, setTotp] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [showHelp, setShowHelp] = useState(false);
-  const [showCustomize, setShowCustomize] = useState(false);
+  const [legacyCleaned, setLegacyCleaned] = useState(false);
 
   const defaults = getDefaults();
-  const [customPw, setCustomPw] = useState('');
-  const [customSecret, setCustomSecret] = useState('');
-  const [customSaved, setCustomSaved] = useState(false);
 
   useEffect(() => {
     // Bypass gate when running in test mode OR when ?gate=skip is set in URL
@@ -31,10 +27,13 @@ export function Gate({ children }: { children: React.ReactNode }) {
       setUnlocked(true);
       return;
     }
+    // Purge any leftover localStorage override from older versions
+    const cleaned = purgeLegacyState();
+    if (cleaned) setLegacyCleaned(true);
     setUnlocked(loadStatus().unlocked);
-    // Auto-show help on first visit if there's no localStorage record
-    if (!localStorage.getItem('raphael-gate-v1')) {
+    if (!sessionStorage.getItem('raphael-gate-v1-help-shown')) {
       setShowHelp(true);
+      sessionStorage.setItem('raphael-gate-v1-help-shown', '1');
     }
   }, []);
 
@@ -43,7 +42,7 @@ export function Gate({ children }: { children: React.ReactNode }) {
     setError(null);
     const ok = await unlockWithPasswordAndTotp(pw, totp);
     if (!ok) {
-      setError('密码或动态口令错误（口令 30 秒一变，请确认未过期）');
+      setError('密码或动态口令错误（口令 30 秒一变，请确认未过期；默认密钥见下方"首次使用说明"）');
       return;
     }
     setTotp(''); setPw('');
@@ -53,21 +52,6 @@ export function Gate({ children }: { children: React.ReactNode }) {
   function onLock() {
     lock();
     setUnlocked(false);
-  }
-
-  async function onSaveCustom(e: React.FormEvent) {
-    e.preventDefault();
-    setError(null);
-    if (!customPw || !customSecret) return;
-    await setOverride(customPw, customSecret.trim());
-    setCustomSaved(true);
-    setTimeout(() => setCustomSaved(false), 2000);
-  }
-
-  function onClearCustom() {
-    clearOverride();
-    setCustomPw(''); setCustomSecret('');
-    setCustomSaved(false);
   }
 
   // ---- Unlocked → show app, plus a tiny lock button -----------------------
@@ -102,6 +86,16 @@ export function Gate({ children }: { children: React.ReactNode }) {
         padding: '36px 32px',
       }}>
         <Header />
+
+        {legacyCleaned && (
+          <div style={{
+            background: '#ecfdf5', border: '1px solid #6ee7b7', color: '#065f46',
+            borderRadius: 10, padding: '10px 14px', fontSize: 12, lineHeight: 1.5, marginBottom: 16,
+          }}>
+            ✓ 已自动清理旧版本残留的自定义凭据，现在所有浏览器统一使用全局默认密钥。
+          </div>
+        )}
+
         <form onSubmit={onUnlock}>
           <label style={lbl}>密码</label>
           <input
@@ -128,23 +122,6 @@ export function Gate({ children }: { children: React.ReactNode }) {
           {showHelp ? '收起 首次使用说明' : '首次使用？查看默认凭据 + 把密钥加入认证器'}
         </button>
         {showHelp && <HelpBlock secret={defaults.totpSecret} issuer={defaults.issuer} account={defaults.account} />}
-
-        <button
-          type="button"
-          onClick={() => { setShowCustomize(s => !s); setCustomSaved(false); }}
-          style={linkBtn}
-        >
-          {showCustomize ? '收起 自定义本浏览器凭据' : '为本浏览器设置独立密码 / 密钥（可选）'}
-        </button>
-        {showCustomize && (
-          <CustomizeForm
-            pw={customPw} setPw={setCustomPw}
-            secret={customSecret} setSecret={setCustomSecret}
-            onSave={onSaveCustom}
-            onClear={onClearCustom}
-            saved={customSaved}
-          />
-        )}
       </div>
     </div>
   );
@@ -208,30 +185,6 @@ function HelpBlock({ secret, issuer, account }: { secret: string; issuer: string
         4) 之后每次访问（任何浏览器 / 任何设备）都用同一套凭据
       </div>
     </div>
-  );
-}
-
-function CustomizeForm({ pw, setPw, secret, setSecret, onSave, onClear, saved }: {
-  pw: string; setPw: (s: string) => void;
-  secret: string; setSecret: (s: string) => void;
-  onSave: (e: React.FormEvent) => void;
-  onClear: () => void;
-  saved: boolean;
-}) {
-  return (
-    <form onSubmit={onSave} style={{ background: '#fff8f0', border: '1px solid #fde68a', borderRadius: 12, padding: 16, marginTop: 10 }}>
-      <div style={{ fontSize: 12, color: '#92400e', lineHeight: 1.6, marginBottom: 10 }}>
-        <b>仅本浏览器生效</b>：写入 localStorage 后，本浏览器解锁使用你设置的密码 / 密钥；其他浏览器不受影响，仍用默认值。删除本浏览器凭据可恢复默认。
-      </div>
-      <label style={lbl}>本浏览器密码</label>
-      <input type="text" value={pw} onChange={(e) => setPw(e.target.value)} style={input} placeholder="（可任意设置）" />
-      <label style={{ ...lbl, marginTop: 10 }}>本浏览器 TOTP 密钥</label>
-      <input type="text" value={secret} onChange={(e) => setSecret(e.target.value.toUpperCase())} style={input} placeholder="Base32 编码的共享密钥" />
-      <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
-        <button type="submit" style={{ ...miniBtn, flex: 1, background: '#007aff', color: '#fff', border: 'none', fontWeight: 700 }}>{saved ? '✓ 已保存' : '保存为本浏览器凭据'}</button>
-        <button type="button" onClick={onClear} style={miniBtn}>恢复默认</button>
-      </div>
-    </form>
   );
 }
 

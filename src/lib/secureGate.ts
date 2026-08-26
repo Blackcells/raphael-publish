@@ -3,31 +3,28 @@
  *
  * STATIC SITE LIMITATION
  * ----------------------
- * There is no backend. Password + TOTP secret are hardcoded in
+ * There is no backend. Password + TOTP secret are HARDCODED in
  * `gateConfig.ts` and shipped in the JS bundle, so anyone with view-source
  * can read them. This is OBSCURITY-BASED gating, not real auth.
  *
- * Flow:
- *   1. User visits the site → sees lock screen with default password hint
- *      and TOTP secret (so they can add it to their authenticator).
- *   2. User enters default password + current 6-digit TOTP code.
- *   3. Gate verifies HMAC-SHA1(defaultSecret, floor(now/30)) truncated to
- *      6 digits (±1 step tolerance for clock drift).
- *   4. sessionStorage marks this tab as unlocked — reload keeps unlocked.
- *   5. Opening a new browser/incognito → just re-enter same credentials.
- *      NO per-browser setup required.
+ * DESIGN
+ * ------
+ * To make "configure once, works in every browser" possible, we use ONLY
+ * the hardcoded defaults. There is NO per-browser override mechanism —
+ * that would create the cross-browser inconsistency users reported.
  *
- * Optional per-browser override:
- *   If the user wants a different password/TOTP on a specific browser
- *   (e.g., to revoke access from a lost laptop), they can use the
- *   "Customize for this browser" panel which writes to localStorage.
- *   Defaults always work as a fallback.
+ * If you want different credentials: edit DEFAULT_PASSWORD and
+ * DEFAULT_TOTP_SECRET in `gateConfig.ts`, rebuild, and redeploy.
+ *
+ * Migration note: previous versions wrote per-browser overrides to
+ * localStorage. On first load we transparently delete any leftover
+ * record so old state can't conflict with the new global config.
  */
 
 import { DEFAULT_PASSWORD, DEFAULT_TOTP_SECRET, TOTP_ISSUER, TOTP_ACCOUNT } from './gateConfig';
 
-const STORAGE_KEY = 'raphael-gate-v1';
 const UNLOCKED_KEY = 'raphael-gate-v1-unlocked';
+const LEGACY_KEYS = ['raphael-gate-v1']; // older versions
 
 // ---------- SHA-256 + Base32 + HMAC-SHA1 primitives (browser Web Crypto) ----
 
@@ -91,46 +88,7 @@ export async function verifyTotp(secretB32: string, code: string): Promise<boole
   return false;
 }
 
-// ---------- Storage shape (per-browser override) ----------------------------
-
-export interface GateRecord {
-  passwordHash: string;
-  totpSecret: string;
-  createdAt: number;
-}
-
-function readOverride(): GateRecord | null {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return null;
-    return JSON.parse(raw) as GateRecord;
-  } catch { return null; }
-}
-
-export function clearOverride(): void {
-  localStorage.removeItem(STORAGE_KEY);
-}
-
-export async function setOverride(password: string, totpSecret: string): Promise<void> {
-  const passwordHash = await sha256(password);
-  localStorage.setItem(STORAGE_KEY, JSON.stringify({ passwordHash, totpSecret, createdAt: Date.now() }));
-}
-
 // ---------- Public API used by Gate.tsx --------------------------------------
-
-export interface ResolvedConfig {
-  password: string;       // plain text default; or "" if per-browser override is set (then we compare hashes)
-  totpSecret: string;
-  source: 'default' | 'override';
-}
-
-export function getActiveConfig(): ResolvedConfig {
-  const override = readOverride();
-  if (override) {
-    return { password: '', totpSecret: override.totpSecret, source: 'override' };
-  }
-  return { password: DEFAULT_PASSWORD, totpSecret: DEFAULT_TOTP_SECRET, source: 'default' };
-}
 
 export function getDefaults(): { password: string; totpSecret: string; issuer: string; account: string } {
   return { password: DEFAULT_PASSWORD, totpSecret: DEFAULT_TOTP_SECRET, issuer: TOTP_ISSUER, account: TOTP_ACCOUNT };
@@ -149,25 +107,28 @@ export function lock(): void {
 }
 
 /**
- * Verify the visitor's credentials against the active config.
- * - When using defaults, password is compared as plain text (it's hardcoded anyway).
- * - When using per-browser override, password is hashed and compared.
+ * Clear any leftover per-browser override state from previous versions.
+ * Call once on Gate mount to ensure a clean slate.
  */
-export async function unlockWithPasswordAndTotp(password: string, code: string): Promise<boolean> {
-  const cfg = getActiveConfig();
-  let passwordOk = false;
-  if (cfg.source === 'default') {
-    passwordOk = constantTimeEqual(password, cfg.password);
-  } else {
-    const override = readOverride();
-    if (override) {
-      const h = await sha256(password);
-      passwordOk = constantTimeEqual(h, override.passwordHash);
+export function purgeLegacyState(): boolean {
+  let removed = false;
+  for (const key of LEGACY_KEYS) {
+    if (localStorage.getItem(key) !== null) {
+      localStorage.removeItem(key);
+      removed = true;
     }
   }
+  return removed;
+}
+
+/**
+ * Verify the visitor's credentials against the hardcoded defaults.
+ */
+export async function unlockWithPasswordAndTotp(password: string, code: string): Promise<boolean> {
+  const passwordOk = constantTimeEqual(password, DEFAULT_PASSWORD);
   if (!passwordOk) return false;
 
-  const totpOk = await verifyTotp(cfg.totpSecret, code.trim());
+  const totpOk = await verifyTotp(DEFAULT_TOTP_SECRET, code.trim());
   if (!totpOk) return false;
 
   unlock();
@@ -178,5 +139,5 @@ export function otpauthUrl(secret: string, account = TOTP_ACCOUNT, issuer = TOTP
   return `otpauth://totp/${encodeURIComponent(issuer)}:${encodeURIComponent(account)}?secret=${secret}&issuer=${encodeURIComponent(issuer)}&algorithm=SHA1&digits=6&period=30`;
 }
 
-// Back-compat aliases kept so any other imports still work
+// Back-compat alias
 export const DEFAULT_ADMIN_PASSWORD = DEFAULT_PASSWORD;
