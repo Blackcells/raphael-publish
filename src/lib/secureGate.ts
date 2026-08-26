@@ -43,12 +43,6 @@ function base32ToBytes(s: string): Uint8Array {
   return new Uint8Array(out);
 }
 
-async function sha256(text: string): Promise<string> {
-  const enc = new TextEncoder().encode(text);
-  const buf = await crypto.subtle.digest('SHA-256', enc);
-  return Array.from(new Uint8Array(buf)).map((b) => b.toString(16).padStart(2, '0')).join('');
-}
-
 async function hmacSha1(key: Uint8Array, msg: Uint8Array): Promise<Uint8Array> {
   const cryptoKey = await crypto.subtle.importKey('raw', key, { name: 'HMAC', hash: 'SHA-1' }, false, ['sign']);
   const sig = await crypto.subtle.sign('HMAC', cryptoKey, msg);
