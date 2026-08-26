@@ -2,7 +2,7 @@ import type { Theme } from './types';
 
 export const classicThemes: Theme[] = [
   {
-    id: 'apple',
+    id: 'mac',
     name: 'Mac',
     description: '纯净现代的极致留白，适合日常记录的万能首选',
     styles: {
