@@ -80,7 +80,7 @@ async function scrollAndWaitForSync(
 
 test('keeps the copy button visible on mobile', async ({ page }) => {
     await page.setViewportSize({ width: 390, height: 844 });
-    await page.goto('/?gate=skip');
+    await page.goto('/');
 
     await page.getByTestId('tab-preview').click();
     const copyButton = page.locator('[data-testid="copy-button"]:visible');
@@ -94,7 +94,7 @@ test('keeps the copy button visible on mobile', async ({ page }) => {
 });
 
 test('renders bold text with punctuation without leaking markdown markers', async ({ page }) => {
-    await page.goto('/?gate=skip');
+    await page.goto('/');
 
     const editor = page.getByTestId('editor-input');
     await editor.fill('2025年初，伦敦黄金市场的一个月拆借利率一度升至**5%**。');
@@ -111,7 +111,7 @@ for (const device of [
 ] as const) {
     test(`syncs editor and ${device.label} preview scrolling in both directions`, async ({ page }) => {
         await page.setViewportSize({ width: 1440, height: 900 });
-        await page.goto('/?gate=skip');
+        await page.goto('/');
 
         const editor = page.getByTestId('editor-input');
         await editor.fill(buildLongMarkdown());
