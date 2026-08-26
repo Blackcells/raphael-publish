@@ -31,23 +31,6 @@ const UNLOCKED_KEY = 'raphael-gate-v1-unlocked';
 
 // ---------- SHA-256 + Base32 + HMAC-SHA1 primitives (browser Web Crypto) ----
 
-function bufToBase32(bytes: Uint8Array): string {
-  const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
-  let bits = 0;
-  let value = 0;
-  let out = '';
-  for (let i = 0; i < bytes.length; i++) {
-    value = (value << 8) | bytes[i];
-    bits += 8;
-    while (bits >= 5) {
-      out += alphabet[(value >>> (bits - 5)) & 31];
-      bits -= 5;
-    }
-  }
-  if (bits > 0) out += alphabet[(value << (5 - bits)) & 31];
-  return out;
-}
-
 function base32ToBytes(s: string): Uint8Array {
   const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
   const clean = s.replace(/=+$/g, '').toUpperCase();
